@@ -1,3 +1,10 @@
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include "systemcalls.h"
 
 /**
@@ -9,15 +16,24 @@
 */
 bool do_system(const char *cmd)
 {
+    int status;
+    bool result;
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
+    status = system(cmd);
 
-    return true;
+    if (status == -1)
+    {
+        result = false;
+    }
+    else
+    {
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        {
+            result = true;
+        }
+    }
+
+    return result;
 }
 
 /**
@@ -37,31 +53,50 @@ bool do_system(const char *cmd)
 bool do_exec(int count, ...)
 {
     va_list args;
-    va_start(args, count);
     char * command[count+1];
     int i;
-    for(i=0; i<count; i++)
+    int childPid;
+    int status;
+    bool result = true;
+
+    va_start(args, count);
+
+    for (i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
     }
-    command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+    command[count] = NULL;
+
+    fflush(stdout);
+    childPid = fork();
+
+    if (childPid == -1)
+    {
+        result = false;
+    }
+    else if (childPid == 0)
+    {
+        int res = execv(command[0], &command[0]);
+        exit(res);
+    }
+    else
+    {
+        do
+        {
+            if (wait(&status) < 0)
+            {
+                result = false;
+                break;
+            }
+        } while(!WIFEXITED(status));
+
+        result = (WEXITSTATUS(status) == 0) ? true : false;
+    }
 
     va_end(args);
 
-    return true;
+    return result;
 }
 
 /**
@@ -72,28 +107,47 @@ bool do_exec(int count, ...)
 bool do_exec_redirect(const char *outputfile, int count, ...)
 {
     va_list args;
-    va_start(args, count);
     char * command[count+1];
     int i;
+    int fd;
+    bool result = false;
+    int childPid;
+    int status;
+
+    va_start(args, count);
+
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
-
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
-
     va_end(args);
 
-    return true;
+    fflush(stdout);
+    fd = open(outputfile, O_RDWR | O_CREAT | O_SYNC, S_IRWXU | S_IRGRP | S_IROTH);
+
+    if (fd >= 0)
+    {
+        childPid = fork();
+        if (childPid == 0)
+        {
+            if (dup2(fd, 1) >= 0)
+            {
+                execv(command[0], &command[0]);
+            }
+        }
+        else
+        {
+            if (childPid != -1)
+            {
+                if (wait(&status) > 0)
+                {
+                    result = (WEXITSTATUS(status) == 0) ? true : false;
+                }
+            }
+        }
+        close(fd);
+    }
+
+    return result;
 }
